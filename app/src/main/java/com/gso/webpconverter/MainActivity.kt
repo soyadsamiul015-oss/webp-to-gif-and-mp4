@@ -185,10 +185,10 @@ class MainActivity : AppCompatActivity() {
                     adapter.notifyDataSetChanged()
                     statusText.text = "Converting ${i + 1}/${selected.size}: ${item.name}"
                 }
-                val success = convertOne(item, makeGif, makeMp4)
-                if (success) ok++ else fail++
+                val result = convertOneSafe(item, makeGif, makeMp4)
+                if (result == null) ok++ else fail++
                 withContext(Dispatchers.Main) {
-                    item.status = if (success) "done ✓" else "failed ✗"
+                    item.status = result ?: "done ✓"
                     adapter.notifyDataSetChanged()
                 }
             }
@@ -200,15 +200,20 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun convertOne(item: FileItem, makeGif: Boolean, makeMp4: Boolean): Boolean {
+    /** Returns null on success, or a short error string on failure (for on-screen debugging). */
+    private fun convertOneSafe(item: FileItem, makeGif: Boolean, makeMp4: Boolean): String? {
         val baseName = item.name.removeSuffix(".webp").removeSuffix(".WEBP")
         val inFile = File(cacheDir, "in_${System.nanoTime()}.webp")
         try {
             contentResolver.openInputStream(item.uri)?.use { input ->
                 inFile.outputStream().use { input.copyTo(it) }
-            } ?: return false
+            } ?: return "err: can't open input"
 
-            var allOk = true
+            if (!inFile.exists() || inFile.length() == 0L) {
+                return "err: copy empty (${inFile.length()}b)"
+            }
+
+            var lastErr: String? = null
 
             if (makeGif) {
                 val outGif = File(cacheDir, "$baseName.gif")
@@ -217,8 +222,12 @@ class MainActivity : AppCompatActivity() {
                         "\"${outGif.absolutePath}\""
                 val session = FFmpegKit.execute(cmd)
                 if (ReturnCode.isSuccess(session.returnCode) && outGif.length() > 0) {
-                    allOk = saveToDownloads(outGif, "$baseName.gif", "image/gif") && allOk
-                } else allOk = false
+                    if (!saveToDownloads(outGif, "$baseName.gif", "image/gif")) {
+                        lastErr = "err: save-fail gif"
+                    }
+                } else {
+                    lastErr = "ff-gif rc=${session.returnCode} ${session.failStackTrace?.take(60) ?: session.output?.takeLast(80)}"
+                }
                 outGif.delete()
             }
 
@@ -230,14 +239,18 @@ class MainActivity : AppCompatActivity() {
                         "\"${outMp4.absolutePath}\""
                 val session = FFmpegKit.execute(cmd)
                 if (ReturnCode.isSuccess(session.returnCode) && outMp4.length() > 0) {
-                    allOk = saveToDownloads(outMp4, "$baseName.mp4", "video/mp4") && allOk
-                } else allOk = false
+                    if (!saveToDownloads(outMp4, "$baseName.mp4", "video/mp4")) {
+                        lastErr = "err: save-fail mp4"
+                    }
+                } else {
+                    lastErr = "ff-mp4 rc=${session.returnCode} ${session.failStackTrace?.take(60) ?: session.output?.takeLast(80)}"
+                }
                 outMp4.delete()
             }
 
-            return allOk
-        } catch (e: Exception) {
-            return false
+            return lastErr
+        } catch (e: Throwable) {
+            return "exc: ${e.javaClass.simpleName}: ${e.message?.take(80)}"
         } finally {
             inFile.delete()
         }
