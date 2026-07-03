@@ -31,9 +31,7 @@ android {
 }
 
 dependencies {
-    // FFmpeg bundled INSIDE the apk => fully offline conversion
-    implementation files("${rootDir}/libs/ffmpeg-kit-full-gpl.aar")
-    implementation 'com.arthenica:smart-exception-java:0.2.1'
+    implementation 'io.github.xch168:ffmpeg-kit-full-gpl:1.0.2'
 
     implementation 'androidx.core:core-ktx:1.13.1'
     implementation 'androidx.appcompat:appcompat:1.7.0'
@@ -43,19 +41,3 @@ dependencies {
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.4'
 }
-
-// FFmpegKit was retired and pulled from Maven Central, so we fetch a
-// community-mirrored AAR once at build time and bundle it into the APK.
-tasks.register("downloadFFmpegAar") {
-    doLast {
-        def aarFile = file("${rootDir}/libs/ffmpeg-kit-full-gpl.aar")
-        if (!aarFile.exists()) {
-            aarFile.parentFile.mkdirs()
-            println "Downloading ffmpeg-kit AAR (one time, ~90 MB)..."
-            new URL('https://github.com/NooruddinLakhani/ffmpeg-kit-full-gpl/releases/download/v1.0.0/ffmpeg-kit-full-gpl.aar')
-                .withInputStream { i -> aarFile.withOutputStream { it << i } }
-            println "Saved to ${aarFile.absolutePath}"
-        }
-    }
-}
-preBuild.dependsOn("downloadFFmpegAar")
