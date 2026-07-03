@@ -217,18 +217,32 @@ class MainActivity : AppCompatActivity() {
 
            if (makeGif) {
                 val outGif = File(cacheDir, "$baseName.gif")
-                // Simple single-pass conversion - more robust against animated-webp
-                // frame-count quirks than the palettegen/paletteuse two-pass method.
-                val cmd = "-y -i \"${inFile.absolutePath}\" -loop 0 " +
-                        "\"${outGif.absolutePath}\""
-                val session = FFmpegKit.execute(cmd)
-                if (ReturnCode.isSuccess(session.returnCode) && outGif.length() > 0) {
-                    if (!saveToDownloads(outGif, "$baseName.gif", "image/gif")) {
-                        lastErr = "err: save-fail gif"
+                val framesDir = File(cacheDir, "frames_${System.nanoTime()}")
+                framesDir.mkdirs()
+
+                // Step 1: dump every frame as a PNG (sidesteps the animated-webp
+                // demuxer bug that breaks direct webp->gif streaming conversion)
+                val extractCmd = "-y -i \"${inFile.absolutePath}\" " +
+                        "\"${framesDir.absolutePath}/f_%04d.png\""
+                val extractSession = FFmpegKit.execute(extractCmd)
+                val frameFiles = framesDir.listFiles()?.sortedBy { it.name } ?: emptyList()
+
+                if (ReturnCode.isSuccess(extractSession.returnCode) && frameFiles.isNotEmpty()) {
+                    // Step 2: reassemble frames into a GIF (stable image2 path, no muxer bug)
+                    val gifCmd = "-y -framerate 10 -i \"${framesDir.absolutePath}/f_%04d.png\" " +
+                            "-loop 0 \"${outGif.absolutePath}\""
+                    val gifSession = FFmpegKit.execute(gifCmd)
+                    if (ReturnCode.isSuccess(gifSession.returnCode) && outGif.length() > 0) {
+                        if (!saveToDownloads(outGif, "$baseName.gif", "image/gif")) {
+                            lastErr = "err: save-fail gif"
+                        }
+                    } else {
+                        lastErr = "ff-gif2 rc=${gifSession.returnCode} ${gifSession.failStackTrace?.take(60) ?: gifSession.output?.takeLast(80)}"
                     }
                 } else {
-                    lastErr = "ff-gif rc=${session.returnCode} ${session.failStackTrace?.take(60) ?: session.output?.takeLast(80)}"
+                    lastErr = "ff-extract rc=${extractSession.returnCode} frames=${frameFiles.size} ${extractSession.failStackTrace?.take(50) ?: extractSession.output?.takeLast(60)}"
                 }
+                framesDir.deleteRecursively()
                 outGif.delete()
             }
             if (makeMp4) {
