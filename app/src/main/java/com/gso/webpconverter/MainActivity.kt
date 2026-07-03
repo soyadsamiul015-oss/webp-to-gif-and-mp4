@@ -217,17 +217,31 @@ class MainActivity : AppCompatActivity() {
 
             if (makeGif) {
                 val outGif = File(cacheDir, "$baseName.gif")
-                val cmd = "-y -i \"${inFile.absolutePath}\" " +
-                        "-vf \"split[a][b];[a]palettegen[p];[b][p]paletteuse\" " +
-                        "\"${outGif.absolutePath}\""
-                val session = FFmpegKit.execute(cmd)
-                if (ReturnCode.isSuccess(session.returnCode) && outGif.length() > 0) {
-                    if (!saveToDownloads(outGif, "$baseName.gif", "image/gif")) {
-                        lastErr = "err: save-fail gif"
+                val palette = File(cacheDir, "palette_${System.nanoTime()}.png")
+
+                // Step 1: build an optimized color palette from the source
+                val paletteCmd = "-y -i \"${inFile.absolutePath}\" " +
+                        "-vf palettegen=stats_mode=diff " +
+                        "\"${palette.absolutePath}\""
+                val paletteSession = FFmpegKit.execute(paletteCmd)
+
+                if (ReturnCode.isSuccess(paletteSession.returnCode) && palette.length() > 0) {
+                    // Step 2: build the GIF using that palette (avoids split-filter EOF bug)
+                    val gifCmd = "-y -i \"${inFile.absolutePath}\" -i \"${palette.absolutePath}\" " +
+                            "-lavfi \"paletteuse=dither=bayer\" -loop 0 " +
+                            "\"${outGif.absolutePath}\""
+                    val gifSession = FFmpegKit.execute(gifCmd)
+                    if (ReturnCode.isSuccess(gifSession.returnCode) && outGif.length() > 0) {
+                        if (!saveToDownloads(outGif, "$baseName.gif", "image/gif")) {
+                            lastErr = "err: save-fail gif"
+                        }
+                    } else {
+                        lastErr = "ff-gif2 rc=${gifSession.returnCode} ${gifSession.failStackTrace?.take(60) ?: gifSession.output?.takeLast(80)}"
                     }
                 } else {
-                    lastErr = "ff-gif rc=${session.returnCode} ${session.failStackTrace?.take(60) ?: session.output?.takeLast(80)}"
+                    lastErr = "ff-palette rc=${paletteSession.returnCode} ${paletteSession.failStackTrace?.take(60) ?: paletteSession.output?.takeLast(80)}"
                 }
+                palette.delete()
                 outGif.delete()
             }
 
